@@ -46,7 +46,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       },
       */
 
-      _propertySet: function(property, value, effects) {
+      _propertySet: function(property, value, effects, fromAbove) {
         var old = this._data[property];
         if (old !== value) {
           this._data[property] = value;
@@ -54,18 +54,18 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
             this._clearPath(property);
           }
           if (effects) {
-            this._effectEffects(property, value, effects, old);
+            this._effectEffects(property, value, effects, old, fromAbove);
           }
         }
         return old;
       },
 
-      _effectEffects: function(property, value, effects, old) {
+      _effectEffects: function(property, value, effects, old, fromAbove) {
         effects.forEach(function(fx) {
           //console.log(fx);
           var fn = Polymer.Bind[fx.kind + 'Effect'];
           if (fn) {
-            fn.call(this, property, value, fx.effect, old);
+            fn.call(this, property, value, fx.effect, old, fromAbove);
           }
         }, this);
       },

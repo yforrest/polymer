@@ -32,8 +32,10 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       this.reflectPropertyToAttribute(source);
     },
 
-    notifyEffect: function(source) {
-      this._notifyChange(source);
+    notifyEffect: function(source, value, info, old, fromAbove) {
+      if (!fromAbove) {
+        this._notifyChange(source);
+      }
     },
 
     // Raw effect for extension; info.function is an actual function
