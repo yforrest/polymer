@@ -287,24 +287,32 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       y: 0,
       state: 'start',
       started: false,
+      stopped: false,
       moves: [],
       addMove: function(move) {
         if (this.moves.length > TRACK_LENGTH) {
           this.moves.shift();
         }
         this.moves.push(move);
+      },
+      shouldFireEnd: function() {
+        return this.started && !this.stopped;
       }
     },
 
     clearInfo: function() {
       this.info.state = 'start';
       this.info.started = false;
+      this.info.stopped = false;
       this.info.moves = [];
       this.info.x = 0;
       this.info.y = 0;
     },
 
     hasMovedEnough: function(x, y) {
+      if (this.info.stopped) {
+        return false;
+      }
       if (this.info.started) {
         return true;
       }
@@ -323,12 +331,14 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
           self.info.state = self.info.started ? (e.type === 'mouseup' ? 'end' : 'track') : 'start';
           self.info.addMove({x: x, y: y});
           self.fire(t, e);
-          e.preventDefault();
+          if (!self.info.stopped) {
+            e.preventDefault();
+          }
           self.info.started = true;
         }
       };
       var upfn = function upfn(e) {
-        if (self.info.started) {
+        if (self.info.shouldFireEnd()) {
           POINTERSTATE.tapPrevented = true;
           movefn(e);
         }
@@ -366,7 +376,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       var t = e.currentTarget;
       var ct = e.changedTouches[0];
       // only trackend if track was started and not aborted
-      if (this.info.started) {
+      if (this.info.shouldFireEnd()) {
         // iff tracking, always prevent tap
         POINTERSTATE.tapPrevented = true;
         // reset started state on up
@@ -387,6 +397,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         ddx = lastmove.x - secondlast.x;
         ddy = lastmove.y - secondlast.y;
       }
+      var info = this.info;
       return Gestures.fire(target, 'track', {
         state: this.info.state,
         x: touch.clientX,
@@ -397,6 +408,9 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         ddy: ddy,
         hover: function() {
           return deepTargetFind(touch.clientX, touch.clientY);
+        },
+        cancel: function() {
+          info.stopped = true;
         }
       });
     }

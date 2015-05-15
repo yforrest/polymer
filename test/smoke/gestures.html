@@ -45,6 +45,7 @@
         },
         track: function(e, detail) {
           this.logger(e, detail);
+          //detail.cancel();
           if (detail.state === 'end') {
             console.log(detail.hover());
           }
