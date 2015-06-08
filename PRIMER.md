@@ -1546,8 +1546,9 @@ Polymer supports virtual properties whose values are calculated from other prope
 
       fullName: {
         type: String,
-        // when `first` or `last` changes `computeFullName` is called once
-        // (asynchronously) and the value it returns is stored as `fullName`
+        // when `first` or `last` changes `computeFullName` is called once for
+        // each change to `first` and `last` once they are defined defined and
+        // the value it returns is stored as `fullName`
         computed: 'computeFullName(first, last)'
       }
 
