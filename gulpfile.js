@@ -20,6 +20,8 @@ var runseq = require('run-sequence');
 var lazypipe = require('lazypipe');
 var polyclean = require('polyclean');
 var del = require('del');
+var bump = require('gulp-bump');
+var minimist = require('minimist');
 
 var fs = require('fs');
 var path = require('path');
@@ -134,4 +136,15 @@ gulp.task('audit', function() {
 
 gulp.task('release', function(cb) {
   runseq('default', ['copy-bower-json', 'audit'], cb);
+});
+
+var releaseOptions = {
+  string: 'version'
+};
+
+var opts = minimist(process.argv.slice(2), releaseOptions);
+gulp.task('bump', function() {
+  gulp.src(['bower.json', 'package.json'])
+  .pipe(bump(opts.version ? {version: opts.version} : {type:'patch'}))
+  .pipe(gulp.dest('.'));
 });
