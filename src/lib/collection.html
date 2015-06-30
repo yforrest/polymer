@@ -17,49 +17,36 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
   Polymer.Collection = function(userArray) {
     Polymer._collections.set(userArray, this);
     this.userArray = userArray;
-    this.store = userArray.slice();
-    this.initMap();
+    this.initStore();
   };
 
   Polymer.Collection.prototype = {
 
     constructor: Polymer.Collection,
 
-    initMap: function() {
-      var omap = this.omap = new WeakMap();
-      var pmap = this.pmap = {};
-      var s = this.store;
-      for (var i=0; i<s.length; i++) {
-        var item = s[i];
-        if (item && typeof item == 'object') {
-          omap.set(item, i);
-        } else {
-          pmap[item] = i;
-        }
+    _primitiveTypes: {
+      'string': String,
+      'number': Number,
+      'boolean': Boolean
+    },
+
+    initStore: function() {
+      var map = this.map = new WeakMap();
+      for (var i=0; i<this.userArray.length; i++) {
+        map.set(this.ensureUniqueItem(i), i);
       }
+      this.store = this.userArray.slice();
     },
 
     add: function(item) {
       var key = this.store.push(item) - 1;
-      if (item && typeof item == 'object') {
-        this.omap.set(item, key);
-      } else {
-        this.pmap[item] = key;
-      }
+      this.map.set(item, key);
       return key;
     },
 
     removeKey: function(key) {
-      this._removeFromMap(this.store[key]);
+      this.map.delete(this.store[key]);
       delete this.store[key];
-    },
-
-    _removeFromMap: function(item) {
-      if (typeof item == 'object') {
-        this.omap.delete(item);
-      } else {
-        delete this.pmap[item];
-      }
     },
 
     remove: function(item) {
@@ -69,11 +56,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     },
 
     getKey: function(item) {
-      if (typeof item == 'object') {
-        return this.omap.get(item);
-      } else {
-        return this.pmap[item];
-      }
+      return this.map.get(item);
     },
 
     getKeys: function() {
@@ -83,13 +66,9 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     setItem: function(key, item) {
       var old = this.store[key];
       if (old) {
-        this._removeFromMap(old);
+        this.map.delete(old);
       }
-      if (item && typeof item == 'object') {
-        this.omap.set(item, key);
-      } else {
-        this.pmap[item] = key;
-      }
+      this.map.set(item, key);
       this.store[key] = item;
     },
 
@@ -103,6 +82,18 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         items.push(store[key]);
       }
       return items;
+    },
+
+    ensureUniqueItem: function(idx) {
+      var item = this.userArray[idx];
+      var type = typeof item;
+      if (type != 'object') {
+        item = this.userArray[idx] = new this._primitiveTypes[type](item);
+      }
+      if (this.map.has(item)) {
+        item = this.userArray[idx] = Polymer.Base.mixin({}, item);
+      }
+      return item;
     },
 
     _applySplices: function(splices) {
@@ -119,7 +110,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         // Added keys
         var added = [];
         for (j=0; j<s.addedCount; j++) {
-          o = this.userArray[s.index + j];
+          o = this.ensureUniqueItem(s.index + j);
           key = this.add(o);
           added.push(key);
         }

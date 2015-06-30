@@ -140,8 +140,11 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         var array;
         var last = parts[parts.length-1];
         if (parts.length > 1) {
+          // Sequentially dereference each part in the path, save for the last
           for (var i=0; i<parts.length-1; i++) {
             prop = prop[parts[i]];
+            // If the previous part was an array, convert the current index to
+            // a key for notification
             if (array) {
               parts[i] = Polymer.Collection.get(array).getKey(prop);
             }
@@ -150,20 +153,24 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
             }
             array = Array.isArray(prop) ? prop : null;
           }
-          if (array) {
-            var coll = Polymer.Collection.get(array);
-            var old = prop[last];
-            var key = coll.getKey(old);
-            if (key) {
-              parts[i] = key;
-              coll.setItem(key, value);
-            }
-          }
+          var old = prop[last];
+          // Overwrite the last part in the path with the new value
           prop[last] = value;
+          // If the next-to-last part was an array, update the collection
+          // with the new value & convert the index to key for notification
+          if (array && !isNaN(last)) {
+            var coll = Polymer.Collection.get(array);
+            var key = coll.getKey(old);
+            parts[i] = key;
+            coll.setItem(key, coll.ensureUniqueItem(last));
+          }
+          // Notify with the (possibly updated) path only if no root was
+          // provided, since the path would not be not relative to `this`
           if (!root) {
             this.notifyPath(parts.join('.'), value);
           }
         } else {
+          // For single-part paths, we only need to set the property
           prop[path] = value;
         }
       },
@@ -337,7 +344,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 
       _notifySplice: function(array, path, index, added, removed) {
         var splices = [{
-          index: index,
+          index: parseInt(index),
           addedCount: added,
           removed: removed,
           object: array,
