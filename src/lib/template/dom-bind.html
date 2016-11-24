@@ -62,11 +62,21 @@ elements to the template itself as the binding scope.
     is: 'dom-bind',
 
     extends: 'template',
+    _template: null,
 
     created: function() {
       // Ensure dom-bind doesn't stamp until all possible dependencies
       // have resolved
-      Polymer.RenderStatus.whenReady(this._markImportsReady.bind(this));
+      var self = this;
+      Polymer.RenderStatus.whenReady(function() {
+        if (document.readyState == 'loading') {
+          document.addEventListener('DOMContentLoaded', function() {
+            self._markImportsReady();
+          });
+        } else {
+          self._markImportsReady();
+        }
+      });
     },
 
     _ensureReady: function() {
@@ -113,13 +123,21 @@ elements to the template itself as the binding scope.
       }
     },
 
+    _configureInstanceProperties: function() {
+      // We use the _prepConfigure code below to read instance values before
+      // creating instance accessors, rather than the standard method here
+    },
+
     _prepConfigure: function() {
       var config = {};
       for (var prop in this._propertyEffects) {
         config[prop] = this[prop];
       }
       // Pass values set before attached as initialConfig to _setupConfigure
-      this._setupConfigure = this._setupConfigure.bind(this, config);
+      var setupConfigure = this._setupConfigure;
+      this._setupConfigure = function() {
+        setupConfigure.call(this, config);
+      };
     },
 
     attached: function() {
@@ -145,8 +163,9 @@ elements to the template itself as the binding scope.
         this._prepBehaviors();
         this._prepConfigure();
         this._prepBindings();
+        this._prepPropertyInfo();
         Polymer.Base._initFeatures.call(this);
-        this._children = Array.prototype.slice.call(this.root.childNodes);
+        this._children = Polymer.TreeApi.arrayCopyChildNodes(this.root);
       }
       this._insertChildren();
       this.fire('dom-change');

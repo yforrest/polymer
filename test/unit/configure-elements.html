@@ -107,6 +107,16 @@
           observer: 'contentChanged',
           value: 'child'
         },
+        negatedContent: {
+          type: Boolean,
+          observer: 'negatedContentChanged',
+          value: true
+        },
+        compoundInput: {
+          type: String,
+          observer: 'compoundInputChanged',
+          value: 'default'
+        },
         object: {
           type: Object,
           notify: true,
@@ -119,7 +129,47 @@
         },
         stomp: {
           value: 5
+        },
+        attrDash: {
+          observer: 'attrDashChanged',
+          value: 'default'
+        },
+        attrNumber: {
+          type: Number,
+          observer: 'attrNumberChanged',
+          value: 0
+        },
+        attrBoolean: {
+          type: Boolean,
+          observer: 'attrBooleanChanged',
+          value: true
         }
+      },
+
+      created: function() {
+        this.attrDashChanged = sinon.spy();
+        this.attrNumberChanged = sinon.spy();
+        this.attrBooleanChanged = sinon.spy();
+        this.negatedContentChanged = sinon.spy();
+        this.compoundInputChanged = sinon.spy();
+      }
+
+    });
+  </script>
+</dom-module>
+
+<dom-module id="x-configure-simple-child">
+  <script>
+    Polymer({
+
+      is: 'x-configure-simple-child',
+
+      properties: {
+        noeffect: String
+      },
+
+      ready: function() {
+        this.hasPropertyAtReadyTime = (this.noeffect !== undefined);
       }
 
     });
@@ -128,7 +178,17 @@
 
 <dom-module id="x-configure-host">
   <template>
-    <x-configure-child id="child" content="{{content}}" object="{{object.goo}}"></x-configure-child>
+    <x-configure-child id="child"
+        content="{{content}}"
+        negated-content="[[!content]]"
+        compound-input="a [[simple]] [[content]]"
+        object="{{object.goo}}"
+        attr$="{{attrValue}}"
+        attr-dash$="{{attrValue}}"
+        attr-number$="{{attrNumber}}"
+        attr-boolean$="{{attrBoolean}}"
+    ></x-configure-child>
+    <x-configure-simple-child id="simple" noeffect="{{simple}}"></x-configure-simple-child>
   </template>
   <script>
     Polymer({
@@ -156,9 +216,71 @@
         },
         stomp: {
           value: 5
+        },
+        attrValue: {
+          value: 'attrValue'
+        },
+        attrNumber: {
+          value: 42
+        },
+        attrBoolean: {
+          value: false
+        },
+        simple: {
+          value: 'simple'
         }
       }
 
     });
+  </script>
+</dom-module>
+
+<script>
+  window.XConfigLazy = {
+    is: 'x-config-lazy',
+    properties: {
+      noEffectProp: Number,
+      defaultUsesNoEffectProp: {
+        value: function() {
+          return this.noEffectProp * 2;
+        }
+      },
+      prop: {
+        observer: 'propChanged'
+      },
+      readOnlyProp: {
+        readOnly: true,
+        value: 'readOnly'
+      },
+      hadAttrProp: {
+        value: 'hadAttrProp',
+        observer: 'hadAttrPropChanged'
+      }
+    },
+    created: function() {
+      this.noEffectProp = 1;
+      this.propChanged = sinon.spy();
+      this.hadAttrPropChanged = sinon.spy();
+    }
+  };
+</script>
+
+<dom-module id="x-config-lazy-host">
+  <template>
+    <x-config-lazy id="lazy" prop="{{foo}}" read-only-prop="{{foo}}" had-attr-prop="attrValue"></x-config-lazy>
+  </template>
+  <script>
+    Polymer({
+      is: 'x-config-lazy-host',
+      properties: {
+        foo: {
+          value: 'foo',
+          observer: 'fooChanged'
+        }
+      },
+      fooChanged: function(foo) {
+        this.$.lazy.hadAttrProp = foo;
+      }
+    })
   </script>
 </dom-module>

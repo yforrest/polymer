@@ -9,7 +9,7 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 -->
 
 <script>
-
+(function() {
   /*
     Process inputs efficiently via a configure lifecycle callback.
     Configure is called top-down, host before local dom. Users should
@@ -41,18 +41,23 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
   directly (on-foo-changed).
   */
 
+  var usePolyfillProto = Polymer.Settings.usePolyfillProto;
+
   Polymer.Base._addFeature({
 
     // storage for configuration
     _setupConfigure: function(initialConfig) {
       this._config = {};
-      // don't accept undefined values in intialConfig
-      for (var i in initialConfig) {
-        if (initialConfig[i] !== undefined) {
-          this._config[i] = initialConfig[i];    
+      this._handlers = [];
+      this._aboveConfig = null;
+      if (initialConfig) {
+        // don't accept undefined values in intialConfig
+        for (var i in initialConfig) {
+          if (initialConfig[i] !== undefined) {
+            this._config[i] = initialConfig[i];
+          }
         }
       }
-      this._handlers = [];
     },
 
     // static attributes are deserialized into _config
@@ -67,7 +72,10 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 
     // at configure time values are stored in _config
     _configValue: function(name, value) {
-      this._config[name] = value;
+      var info = this._propertyInfo[name];
+      if (!info || !info.readOnly) {
+        this._config[name] = value;
+      }
     },
 
     // Override polymer-mini thunk
@@ -82,28 +90,47 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       // e.g. hand template content stored in notes to children as part of
       // configure flow so templates have their content at ready time
       this._configureAnnotationReferences();
+      // configure instance properties that may have been bound prior to upgrade
+      this._configureInstanceProperties();
       // save copy of configuration that came from above
       this._aboveConfig = this.mixin({}, this._config);
       // get individual default values from property configs
       var config = {};
       // mixed-in behaviors
-      this.behaviors.forEach(function(b) {
-        this._configureProperties(b.properties, config);
-      }, this);
+      for (var i=0; i < this.behaviors.length; i++) {
+        this._configureProperties(this.behaviors[i].properties, config);
+      }
       // prototypical behavior
       this._configureProperties(this.properties, config);
+      // TODO(sorvell): it *may* be faster to loop over _propertyInfo but
+      // there are some test issues.
+      //this._configureProperties(this._propertyInfo, config);
       // override local configuration with configuration from above
-      this._mixinConfigure(config, this._aboveConfig);
+      this.mixin(config, this._aboveConfig);
       // this is the new _config, which are the final values to be applied
       this._config = config;
       // pass configuration data to bindings
-      this._distributeConfig(this._config);
+      if (this._clients && this._clients.length) {
+        this._distributeConfig(this._config);
+      }
+    },
+
+    _configureInstanceProperties: function() {
+      for (var i in this._propertyEffects) {
+        // Allow properties set before upgrade on the instance
+        // to override default values. This allows late upgrade + an early set
+        // to not b0rk accessors on the prototype.
+        // Perf testing has shown `hasOwnProperty` to be ok here.
+        if (!usePolyfillProto && this.hasOwnProperty(i)) {
+          this._configValue(i, this[i]);
+          delete this[i];
+        }
+      }
     },
 
     _configureProperties: function(properties, config) {
       for (var i in properties) {
         var c = properties[i];
-        // don't accept undefined values
         if (c.value !== undefined) {
           var value = c.value;
           if (typeof value == 'function') {
@@ -111,14 +138,6 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
             value = value.call(this, this._config);
           }
           config[i] = value;
-        }
-      }
-    },
-
-    _mixinConfigure: function(a, b) {
-      for (var prop in b) {
-        if (!this.getPropertyInfo(prop).readOnly) {
-          a[prop] = b[prop];
         }
       }
     },
@@ -131,13 +150,28 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
           var fx = fx$[p];
           if (fx) {
             for (var i=0, l=fx.length, x; (i<l) && (x=fx[i]); i++) {
+              // TODO(kschaaf): computed annotations are excluded from top-down
+              // configure for now; to be revisited
               if (x.kind === 'annotation') {
                 var node = this._nodes[x.effect.index];
+                var name = x.effect.propertyName;
                 // seeding configuration only
-                if (node._configValue) {
+                var isAttr = (x.effect.kind == 'attribute');
+                var hasEffect = (node._propertyEffects &&
+                  node._propertyEffects[name]);
+                if (node._configValue && (hasEffect || !isAttr)) {
                   var value = (p === x.effect.value) ? config[p] :
-                    this.get(x.effect.value, config);
-                  node._configValue(x.effect.name, value);
+                    this._get(x.effect.value, config);
+                  value = this._computeFinalAnnotationValue(node, name, value,
+                                                            x.effect);
+                  if (isAttr) {
+                    // For attribute bindings, flow through the same ser/deser
+                    // process to ensure the value is the same as if it were
+                    // bound through the attribute
+                    value = node.deserialize(this.serialize(value),
+                      node._propertyInfo[name].type);
+                  }
+                  node._configValue(name, value);
                 }
               }
             }
@@ -174,10 +208,17 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     // effects and side effects must not be processed before ready time,
     // handling is queue/defered until then.
     _notifyListener: function(fn, e) {
-      if (!this._clientsReadied) {
-        this._queueHandler([fn, e, e.target]);
-      } else {
-        return fn.call(this, e, e.target);
+      if (!Polymer.Bind._isEventBogus(e, e.target)) {
+        var value, path;
+        if (e.detail) {
+          value = e.detail.value;
+          path = e.detail.path;
+        }
+        if (!this._clientsReadied) {
+          this._queueHandler([fn, e.target, value, path]);
+        } else {
+          return fn.call(this, e.target, value, path);
+        }
       }
     },
 
@@ -188,10 +229,17 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     _flushHandlers: function() {
       var h$ = this._handlers;
       for (var i=0, l=h$.length, h; (i<l) && (h=h$[i]); i++) {
-        h[0].call(this, h[1], h[2]);
+        h[0].call(this, h[1], h[2], h[3]);
       }
+      // reset handlers array
+      //
+      // If an element holds a reference to a CustomEvent with a detail
+      // property, Chrome will leak memory across page refreshes
+      // https://crbug.com/529941
+      this._handlers = [];
     }
 
   });
 
+})();
 </script>

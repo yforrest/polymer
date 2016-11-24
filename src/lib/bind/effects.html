@@ -8,39 +8,35 @@ Code distributed by Google as part of the polymer project is also
 subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 -->
 <link rel="import" href="../case-map.html">
+<link rel="import" href="../path.html">
+
 <script>
 
   Polymer.Base.extend(Polymer.Bind, {
 
     _shouldAddListener: function(effect) {
       return effect.name &&
-             effect.mode === '{' &&
-             !effect.negate &&
-             effect.kind != 'attribute'
-             ;
+             effect.kind != 'attribute' &&
+             effect.kind != 'text' &&
+             !effect.isCompound &&
+             effect.parts[0].mode === '{';
     },
 
     _annotationEffect: function(source, value, effect) {
       if (source != effect.value) {
-        value = this.get(effect.value);
+        value = this._get(effect.value);
         this.__data__[effect.value] = value;
       }
-      var calc = effect.negate ? !value : value;
-      // For better interop, dirty check before setting when custom events
-      // are used, since the target element may not dirty check (e.g. <input>)
-      if (!effect.customEvent ||
-          this._nodes[effect.index][effect.name] !== calc) {
-        return this._applyEffectValue(calc, effect);
-      }
+      this._applyEffectValue(effect, value);
     },
 
-    _reflectEffect: function(source) {
-      this.reflectPropertyToAttribute(source);
+    _reflectEffect: function(source, value, effect) {
+      this.reflectPropertyToAttribute(source, effect.attribute, value);
     },
 
     _notifyEffect: function(source, value, effect, old, fromAbove) {
       if (!fromAbove) {
-        this._notifyChange(source);
+        this._notifyChange(source, effect.event, value);
       }
     },
 
@@ -66,6 +62,10 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         if (args) {
           fn.apply(this, args);
         }
+      } else if (effect.dynamicFn) {
+        // dynamic functions can be just like every other property `undefined`
+        // so we MUST ignore an undefined value here. (That's totally the
+        // same guard we use within `_marshalArgs` and part of the spec.)
       } else {
         this._warn(this._logf('_complexObserverEffect', 'observer method `' +
           effect.method + '` not defined'));
@@ -73,15 +73,20 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     },
 
     _computeEffect: function(source, value, effect) {
-      var args = Polymer.Bind._marshalArgs(this.__data__, effect, source, value);
-      if (args) {
-        var fn = this[effect.method];
-        if (fn) {
-          this.__setProperty(effect.property, fn.apply(this, args));
-        } else {
-          this._warn(this._logf('_computeEffect', 'compute method `' +
-            effect.method + '` not defined'));
+      var fn = this[effect.method];
+      if (fn) {
+        var args = Polymer.Bind._marshalArgs(this.__data__, effect, source, value);
+        if (args) {
+          var computedvalue = fn.apply(this, args);
+          this.__setProperty(effect.name, computedvalue);
         }
+      } else if (effect.dynamicFn) {
+        // dynamic functions can be just like every other property `undefined`
+        // so we MUST ignore an undefined value here. (That's totally the
+        // same guard we use within `_marshalArgs` and part of the spec.)
+      } else {
+        this._warn(this._logf('_computeEffect', 'compute method `' +
+          effect.method + '` not defined'));
       }
     },
 
@@ -92,11 +97,12 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         var args = Polymer.Bind._marshalArgs(this.__data__, effect, source, value);
         if (args) {
           var computedvalue = fn.apply(computedHost, args);
-          if (effect.negate) {
-            computedvalue = !computedvalue;
-          }
-          this._applyEffectValue(computedvalue, effect);
+          this._applyEffectValue(effect, computedvalue);
         }
+      } else if (effect.dynamicFn) {
+        // dynamic functions can be just like every other property `undefined`
+        // so we MUST ignore an undefined value here. (That's totally the
+        // same guard we use within `_marshalArgs` and part of the spec.)
       } else {
         computedHost._warn(computedHost._logf('_annotatedComputationEffect',
           'compute method `' + effect.method + '` not defined'));
@@ -108,25 +114,39 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     _marshalArgs: function(model, effect, path, value) {
       var values = [];
       var args = effect.args;
+      // Actually we should return early as soon as we see an `undefined`,
+      // but dom-repeat relies on this behavior.
+      var bailoutEarly = (args.length > 1 || effect.dynamicFn);
       for (var i=0, l=args.length; i<l; i++) {
         var arg = args[i];
         var name = arg.name;
         var v;
         if (arg.literal) {
           v = arg.value;
-        } else if (arg.structured) {
-          v = Polymer.Base.get(name, model);
+        } else if (path === name) {
+          v = value;
         } else {
+          // Take advantage of the fact that all values sent through the path
+          // notifications system are cached on the model. Trivially, all the
+          // user properties can be looked up there as well.
           v = model[name];
+          if (v === undefined && arg.structured) {
+            // All initial values and base assignments don't go through the
+            // notifications API, so we must construct/evaluate the correct
+            // value. (E.g. you assign a new object to `this.foo`, but your
+            // observer actually listens to `foo.bar.quux`)
+            v = Polymer.Base._get(name, model);
+          }
         }
-        if (args.length > 1 && v === undefined) {
+        if (bailoutEarly && v === undefined) {
           return;
         }
         if (arg.wildcard) {
           // Only send the actual path changed info if the change that
-          // caused the observer to run matched the wildcard
-          var baseChanged = (name.indexOf(path + '.') === 0);
-          var matches = (effect.trigger.name.indexOf(name) === 0 && !baseChanged);
+          // caused the observer to run matches this arg. Note that this holds
+          // also true when `path === name`. We can skip this check b/c then
+          // `name` and `v` already have the values we want.
+          var matches = Polymer.Path.isAncestor(path, name);
           values[i] = {
             path: matches ? path : name,
             value: matches ? value : v,

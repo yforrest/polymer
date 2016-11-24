@@ -24,7 +24,10 @@ Polymer.Debounce = (function() {
   
   var Debouncer = function(context) {
     this.context = context;
-    this.boundComplete = this.complete.bind(this);
+    var self = this;
+    this.boundComplete = function() {
+      self.complete();
+    }
   };
   
   Debouncer.prototype = {
@@ -40,12 +43,14 @@ Polymer.Debounce = (function() {
       if (this.finish) {
         this.finish();
         this.finish = null;
+        this.callback = null;
       }
     },
     complete: function() {
       if (this.finish) {
+        var callback = this.callback;
         this.stop();
-        this.callback.call(this.context);
+        callback.call(this.context);
       }
     }
   };

@@ -14,7 +14,6 @@
   <template>
     <x-basic id="basic1" notifying-value="{{obj.value}}" attrvalue$="{{obj.value}}" othervalue="{{obj.value2}}"></x-basic>
     <x-basic id="basic2" notifying-value="{{obj.value}}" attrvalue$="{{obj.value}}"></x-basic>
-    <x-basic id="basic3" notifying-value="{{!obj.value}}" attrvalue$="{{!obj.value}}"></x-basic>
   </template>
   <script>
     Polymer({
@@ -27,7 +26,7 @@
       },
       observers: [
         'objSubpathChanged(obj.*)',
-        'objValueChanged(obj.value)',
+        'objValueChanged(obj.value)'
       ],
       created: function() {
         this.observerCounts = {
@@ -51,7 +50,7 @@
       objValueChanged: function(value) {
         this.observerCounts.objValueChanged++;
         assert.equal(this.obj.value, value);
-      },
+      }
     });
   </script>
 </dom-module>
@@ -71,7 +70,7 @@
       },
       observers: [
         'objSubpathChanged(obj.*)',
-        'objValueChanged(obj.value)',
+        'objValueChanged(obj.value)'
       ],
       created: function() {
         this.observerCounts = {
@@ -96,7 +95,7 @@
       objValueChanged: function(value) {
         this.observerCounts.objValueChanged++;
         assert.equal(this.obj.value, value);
-      },
+      }
     });
   </script>
 </dom-module>
@@ -124,8 +123,12 @@
         'multipleChanged(a, b, nested.obj.*)',
         'multiplePathsChanged(a, nested.b, nested.obj.c)',
         'arrayChanged(array.splices)',
+        'arrayChangedDeep(array.*)',
         'arrayNoCollChanged(arrayNoColl.splices)',
-        'arrayOrPropChanged(prop, array.splices)'
+        'arrayOrPropChanged(prop, array.splices)',
+        'aChanged(a.*)',
+        'bChanged(b.*)',
+        'cChanged(c.*)'
       ],
       created: function() {
         this.observerCounts = {
@@ -206,7 +209,9 @@
           assert.equal(splices.keySplices[0].added.length, 3,
             'arrayChanged keySplices incorrect');
         }
+        this.arraySplices = splices;
       },
+      arrayChangedDeep: function() { },
       arrayNoCollChanged: function(splices) {
         this.observerCounts.arrayNoCollChanged++;
         if (this.arrayNoColl.length) {
@@ -216,10 +221,13 @@
             'arrayNoCollChanged indexSplices incorrect');
         }
       },
-      arrayOrPropChanged: function(prop, splices) {
+      arrayOrPropChanged: function(prop) {
         this.observerCounts.arrayOrPropChanged++;
         assert.equal(prop, this.prop);
-      }
+      },
+      aChanged: function() {},
+      bChanged: function() {},
+      cChanged: function() {}
     });
   </script>
 </dom-module>

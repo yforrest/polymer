@@ -58,16 +58,34 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
      */
     behaviors: [],
 
-    _prepBehaviors: function() {
+    _desugarBehaviors: function() {
       if (this.behaviors.length) {
-        this.behaviors = this._flattenBehaviorsList(this.behaviors);
+        this.behaviors = this._desugarSomeBehaviors(this.behaviors);
       }
-      this._prepAllBehaviors(this.behaviors);
+    },
+
+    _desugarSomeBehaviors: function(behaviors) {
+      var behaviorSet = [];
+      // iteration 1
+      behaviors = this._flattenBehaviorsList(behaviors);
+      // iteration 2
+      // traverse the behaviors in _reverse_ order (youngest first) because
+      // `_mixinBehavior` has _first property wins_ behavior, this is done
+      // to optimize # of calls to `_copyOwnProperty`
+      for (var i=behaviors.length-1; i>=0; i--) {
+        var b = behaviors[i];
+        if (behaviorSet.indexOf(b) === -1) {
+          this._mixinBehavior(b);
+          behaviorSet.unshift(b);
+        }
+      }
+      return behaviorSet;
     },
 
     _flattenBehaviorsList: function(behaviors) {
       var flat = [];
-      behaviors.forEach(function(b) {
+      for (var i=0; i < behaviors.length; i++) {
+        var b = behaviors[i];
         if (b instanceof Array) {
           flat = flat.concat(this._flattenBehaviorsList(b));
         }
@@ -77,18 +95,26 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         } else {
           this._warn(this._logf('_flattenBehaviorsList', 'behavior is null, check for missing or 404 import'));
         }
-      }, this);
+      }
       return flat;
     },
 
-    _prepAllBehaviors: function(behaviors) {
-      // traverse the behaviors in _reverse_ order (youngest first) because
-      // `_mixinBehavior` has _first property wins_ behavior, this is done
-      // to optimize # of calls to `_copyOwnProperty`
-      for (var i=behaviors.length-1; i>=0; i--) {
-        this._mixinBehavior(behaviors[i]);
+    _mixinBehavior: function(b) {
+      var n$ = Object.getOwnPropertyNames(b);
+      for (var i=0, n; (i<n$.length) && (n=n$[i]); i++) {
+        if (!Polymer.Base._behaviorProperties[n] && !this.hasOwnProperty(n)) {
+          this.copyOwnProperty(n, b, this);
+        }
       }
-      // we iterate a second time so that `_prepBehavior` goes in natural order
+    },
+
+    _prepBehaviors: function() {
+      this._prepFlattenedBehaviors(this.behaviors);
+    },
+
+    _prepFlattenedBehaviors: function(behaviors) {
+      // iteration 3
+      // `_prepBehavior` goes in natural order
       // otherwise, it's a tricky detail for implementors of `_prepBehavior`
       for (var i=0, l=behaviors.length; i<l; i++) {
         this._prepBehavior(behaviors[i]);
@@ -97,35 +123,18 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       this._prepBehavior(this);
     },
 
-    _mixinBehavior: function(b) {
-       Object.getOwnPropertyNames(b).forEach(function(n) {
-        switch (n) {
-          case 'hostAttributes':
-          case 'registered':
-          case 'properties':
-          case 'observers':
-          case 'listeners':
-          case 'created':
-          case 'attached':
-          case 'detached':
-          case 'attributeChanged':
-          case 'configure':
-          case 'ready':
-            break;
-          default:
-            if (!this.hasOwnProperty(n)) {
-              this.copyOwnProperty(n, b, this);
-            }
-            break;
-        }
-      }, this);
+    _doBehavior: function(name, args) {
+      for (var i=0; i < this.behaviors.length; i++) {
+        this._invokeBehavior(this.behaviors[i], name, args);
+      }
+      this._invokeBehavior(this, name, args);
     },
 
-    _doBehavior: function(name, args) {
-      this.behaviors.forEach(function(b) {
-        this._invokeBehavior(b, name, args);
-      }, this);
-      this._invokeBehavior(this, name, args);
+    // note: repeating logic here to avoid fn call.
+    _doBehaviorOnly: function(name, args) {
+      for (var i=0; i < this.behaviors.length; i++) {
+        this._invokeBehavior(this.behaviors[i], name, args);
+      }
     },
 
     _invokeBehavior: function(b, name, args) {
@@ -136,12 +145,29 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     },
 
     _marshalBehaviors: function() {
-      this.behaviors.forEach(function(b) {
-        this._marshalBehavior(b);
-      }, this);
+      for (var i=0; i < this.behaviors.length; i++) {
+        this._marshalBehavior(this.behaviors[i]);
+      }
       this._marshalBehavior(this);
     }
 
   });
+
+  // special properties on behaviors are not mixed in and are instead
+  // either processed specially (e.g. listeners, properties) or available
+  // for calling via doBehavior (e.g. created, ready)
+  Polymer.Base._behaviorProperties = {
+    hostAttributes: true,
+    beforeRegister: true,
+    registered: true,
+    properties: true,
+    observers: true,
+    listeners: true,
+    created: true,
+    attached: true,
+    detached: true,
+    attributeChanged: true,
+    ready: true
+  }
 
 </script>

@@ -7,10 +7,12 @@ The complete set of contributors may be found at http://polymer.github.io/CONTRI
 Code distributed by Google as part of the polymer project is also
 subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 -->
+<link rel="import" href="../lib/style-util.html">
 <link rel="import" href="../lib/style-properties.html">
 <link rel="import" href="../lib/settings.html">
 <link rel="import" href="../lib/style-defaults.html">
 <link rel="import" href="../lib/style-cache.html">
+
 <script>
   (function() {
     'use strict';
@@ -19,50 +21,97 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 
     var propertyUtils = Polymer.StyleProperties;
     var styleTransformer = Polymer.StyleTransformer;
-    var styleUtil = Polymer.StyleUtil;
     var styleDefaults = Polymer.StyleDefaults;
 
     var nativeShadow = Polymer.Settings.useNativeShadow;
+    var nativeVariables = Polymer.Settings.useNativeCSSProperties;
 
     Polymer.Base._addFeature({
 
       _prepStyleProperties: function() {
         // note: an element should produce an x-scope stylesheet
-        // if it has any _stylePropertyNames
-        this._ownStylePropertyNames = this._styles ?
-          propertyUtils.decorateStyles(this._styles) :
-          [];
+        // if it has any _ownStylePropertyNames
+        if (!nativeVariables) {
+          this._ownStylePropertyNames = this._styles && this._styles.length ?
+            propertyUtils.decorateStyles(this._styles, this) :
+            null;
+        }
       },
 
       /**
-       * An element's style properties can be directly modified by 
-       * setting key-value pairs in `customStyle` on the element 
+       * An element's style properties can be directly modified by
+       * setting key-value pairs in `customStyle` on the element
        * (analogous to setting `style`) and then calling `updateStyles()`.
        *
        */
-      customStyle: {},
+      customStyle: null,
+
+      /**
+     * Returns the computed style value for the given property.
+     * @param {String} property
+     * @return {String} the computed value
+     */
+      getComputedStyleValue: function(property) {
+        // refresh the style properties for this node
+        if (!nativeVariables && !this._styleProperties) {
+          this._computeStyleProperties();
+        }
+        return !nativeVariables && this._styleProperties &&
+          this._styleProperties[property] ||
+          getComputedStyle(this).getPropertyValue(property);
+      },
 
       // here we have an instance time spot to put custom property data
       _setupStyleProperties: function() {
         this.customStyle = {};
+        this._styleCache = null;
+        this._styleProperties = null;
+        this._scopeSelector = null;
+        this._ownStyleProperties = null;
+        this._customStyle = null;
       },
 
+      // TODO(dfreedm): should only be true if and only if browser doesn't
+      // support native custom properties.
       _needsStyleProperties: function() {
-        return Boolean(this._ownStylePropertyNames &&
+        return Boolean(!nativeVariables && this._ownStylePropertyNames &&
           this._ownStylePropertyNames.length);
+      },
+
+      _validateApplyShim: function() {
+        if (this.__applyShimInvalid) {
+          // rerun apply shim
+          Polymer.ApplyShim.transform(this._styles, this.__proto__);
+          var cssText = styleTransformer.elementStyles(this);
+          if (nativeShadow) {
+            // replace style in template
+            var templateStyle = this._template.content.querySelector('style');
+            if (templateStyle) {
+              templateStyle.textContent = cssText;
+            }
+          } else {
+            // replace scoped style
+            var shadyStyle = this._scopeStyle && this._scopeStyle.nextSibling;
+            if (shadyStyle) {
+              shadyStyle.textContent = cssText;
+            }
+          }
+        }
       },
 
       _beforeAttached: function() {
         // note: do this once automatically,
         // then requires calling `updateStyles`
-        if (!this._scopeSelector && this._needsStyleProperties()) {
+        if ((!this._scopeSelector || this.__stylePropertiesInvalid) &&
+          this._needsStyleProperties()) {
+          this.__stylePropertiesInvalid = false;
           this._updateStyleProperties();
         }
       },
 
       _findStyleHost: function() {
         var e = this, root;
-        while (root = Polymer.dom(e).getOwnerRoot()) {
+        while ((root = Polymer.dom(e).getOwnerRoot())) {
           if (Polymer.isInstance(root.host)) {
             return root.host;
           }
@@ -73,15 +122,24 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 
       _updateStyleProperties: function() {
         var info, scope = this._findStyleHost();
+        // ensure scope properties exist before any access of scope cache.
+        if (!scope._styleProperties) {
+          scope._computeStyleProperties();
+        }
         // install cache in host if it doesn't exist.
         if (!scope._styleCache) {
           scope._styleCache = new Polymer.StyleCache();
         }
         var scopeData = propertyUtils
           .propertyDataFromStyles(scope._styles, this);
+        // the scope cache does not evaluate if @media rules, :host(), or :host-context() rules defined in this element have changed
+        // therefore, if we detect those rules, we opt-out of the scope cache
+        var scopeCacheable = !this.__notStyleScopeCacheable;
         // look in scope cache
-        scopeData.key.customStyle = this.customStyle;
-        info = scope._styleCache.retrieve(this.is, scopeData.key, this._styles);
+        if (scopeCacheable) {
+          scopeData.key.customStyle = this.customStyle;
+          info = scope._styleCache.retrieve(this.is, scopeData.key, this._styles);
+        }
         // compute style properties (fast path, if cache hit)
         var scopeCached = Boolean(info);
         if (scopeCached) {
@@ -115,10 +173,14 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
             style: style,
             _scopeSelector: this._scopeSelector,
             _styleProperties: this._styleProperties
+          };
+          if (scopeCacheable) {
+            scopeData.key.customStyle = {};
+            this.mixin(scopeData.key.customStyle, this.customStyle);
+            scope._styleCache.store(this.is, info, scopeData.key, this._styles);
           }
-          scopeData.key.customStyle = {};
-          this.mixin(scopeData.key.customStyle, this.customStyle);
-          scope._styleCache.store(this.is, info, scopeData.key, this._styles);
+          // global cache key is all property values consumed in this element,
+          // we _can_ use the global cache with @media, :host(), and :host-context() rules, as _computeStyleProperties will determine if those properties have changed
           if (!globalCached) {
             // save in global cache
             styleCache.store(this.is, Object.create(info), this._ownStyleProperties,
@@ -130,22 +192,23 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       _computeStyleProperties: function(scopeProps) {
         // get scope and make sure it has properties
         var scope = this._findStyleHost();
-        // force scope to compute properties if they don't exist or if forcing
-        // and it doesn't need properties
+        // force scope to compute properties if they don't exist
         if (!scope._styleProperties) {
           scope._computeStyleProperties();
         }
         // start with scope style properties
         var props = Object.create(scope._styleProperties);
+        // collect properties from :host and :root
+        var hostAndRootProps =
+          propertyUtils.hostAndRootPropertiesForScope(this);
         // mixin own host properties (lower specifity than scope props)
-        this.mixin(props, propertyUtils.hostPropertiesFromStyles(this._styles));
+        this.mixin(props, hostAndRootProps.hostProps);
         // mixin properties matching this element in scope
         scopeProps = scopeProps ||
           propertyUtils.propertyDataFromStyles(scope._styles, this).properties;
         this.mixin(props, scopeProps);
         // finally mixin properties inherent to this element
-        this.mixin(props,
-          propertyUtils.scopePropertiesFromStyles(this._styles));
+        this.mixin(props, hostAndRootProps.rootProps);
         propertyUtils.mixinCustomStyle(props, this.customStyle);
         // reify properties (note: only does own properties)
         propertyUtils.reify(props);
@@ -191,15 +254,16 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
             value = host._scopeElementClass(node, value);
           }
         }
-        // note: using Polymer.dom here ensures that any attribute sets
-        // will provoke distribution if necessary
-        node = Polymer.dom(node);
+        // note: using Polymer.dom here ensures that any attribute sets will
+        // provoke distribution if necessary; do this if and only if necessary
+        node = (this.shadyRoot && this.shadyRoot._hasDistributed) ?
+          Polymer.dom(node) : node;
         serializeValueToAttribute.call(this, value, attribute, node);
       },
 
       _scopeElementClass: function(element, selector) {
         if (!nativeShadow && !this._scopeCssViaAttr) {
-          selector += (selector ? ' ' : '') + SCOPE_NAME + ' ' + this.is +
+          selector = (selector ? selector + ' ' : '') + SCOPE_NAME + ' ' + this.is +
             (element._scopeSelector ? ' ' +  XSCOPE_NAME + ' ' +
             element._scopeSelector : '');
         }
@@ -221,22 +285,31 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
        * for setting `customStyle` and then calling `updateStyles`.
       */
       updateStyles: function(properties) {
-        if (this.isAttached) {
-          if (properties) {
-            this.mixin(this.customStyle, properties);
-          }
-          // skip applying properties to self if not used
-          if (this._needsStyleProperties()) {
-            this._updateStyleProperties();
-          // when an element doesn't use style properties, its own properties
-          // should be invalidated so elements down the tree update ok.
+        if (properties) {
+          this.mixin(this.customStyle, properties);
+        }
+        if (nativeVariables) {
+          propertyUtils.updateNativeStyleProperties(this, this.customStyle);
+        } else {
+          // actually process styling changes if and only if attached
+          if (this.isAttached) {
+            // skip applying properties to self if not used
+            if (this._needsStyleProperties()) {
+              this._updateStyleProperties();
+            // when an element doesn't use style properties, its own properties
+            // should be invalidated so elements down the tree update ok.
+            } else {
+              this._styleProperties = null;
+            }
+          // if called when an element is not attached, invalidate
+          // styling by unsetting scopeSelector.
           } else {
-            this._styleProperties = null;
+            this.__stylePropertiesInvalid = true;
           }
           if (this._styleCache) {
             this._styleCache.clear();
           }
-          // always apply properties to root
+          // go down...
           this._updateRootStyles();
         }
       },

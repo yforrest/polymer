@@ -51,6 +51,11 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         assert.equal(Polymer.DomModule.import('Case').textContent, 'Case');
       });
 
+      test('mixed case element creation', function() {
+        var t = new TestElement(); //eslint-disable-line
+        assert.ok(t.$.content);
+      });
+
     });
 
   </script>

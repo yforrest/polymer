@@ -10,9 +10,8 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 
 <link rel="import" href="../lib/bind/accessors.html">
 <link rel="import" href="../lib/bind/effects.html">
-
+<link rel="import" href="../lib/path.html">
 <script>
-
   /**
    * Support for property side effects.
    *
@@ -33,7 +32,9 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
   Polymer.Base._addFeature({
 
     _addPropertyEffect: function(property, kind, effect) {
-     Polymer.Bind.addPropertyEffect(this, property, kind, effect);
+      var prop = Polymer.Bind.addPropertyEffect(this, property, kind, effect);
+      // memoize path function for faster lookup.
+      prop.pathFn = this['_' + prop.kind + 'PathEffect'];
     },
 
     // prototyping
@@ -60,10 +61,18 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
             this._addComputedEffect(p, prop.computed);
           }
           if (prop.notify) {
-            this._addPropertyEffect(p, 'notify');
+            this._addPropertyEffect(p, 'notify', {
+              event: Polymer.CaseMap.camelToDashCase(p) + '-changed'});
           }
           if (prop.reflectToAttribute) {
-            this._addPropertyEffect(p, 'reflect');
+            var attr = Polymer.CaseMap.camelToDashCase(p);
+            if (attr[0] === '-') {
+              this._warn(this._logf('_addPropertyEffects', 'Property ' + p + ' cannot be reflected to attribute ' + attr + ' because "-" is not a valid starting attribute name. Use a lowercase first letter for the property instead.'));
+            } else {
+              this._addPropertyEffect(p, 'reflect', {
+                attribute: attr
+              });
+            }
           }
           if (prop.readOnly) {
             // Ensure accessor is created
@@ -75,14 +84,27 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 
     _addComputedEffect: function(name, expression) {
       var sig = this._parseMethod(expression);
-      sig.args.forEach(function(arg) {
+
+      var dynamicFn = sig.dynamicFn;
+
+      for (var i=0, arg; (i<sig.args.length) && (arg=sig.args[i]); i++) {
         this._addPropertyEffect(arg.model, 'compute', {
           method: sig.method,
           args: sig.args,
           trigger: arg,
-          property: name
+          name: name,
+          dynamicFn: dynamicFn
         });
-      }, this);
+      }
+      if (dynamicFn) {
+        this._addPropertyEffect(sig.method, 'compute', {
+          method: sig.method,
+          args: sig.args,
+          trigger: null,
+          name: name,
+          dynamicFn: dynamicFn
+        });
+      }
     },
 
     _addObserverEffect: function(property, observer) {
@@ -94,34 +116,48 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 
     _addComplexObserverEffects: function(observers) {
       if (observers) {
-        observers.forEach(function(observer) {
-          this._addComplexObserverEffect(observer);
-        }, this);
+        for (var i=0, o; (i<observers.length) && (o=observers[i]); i++)  {
+          this._addComplexObserverEffect(o);
+        }
       }
     },
 
     _addComplexObserverEffect: function(observer) {
       var sig = this._parseMethod(observer);
-      sig.args.forEach(function(arg) {
+
+      if (!sig) {
+        throw new Error("Malformed observer expression '" + observer + "'");
+      }
+
+      var dynamicFn = sig.dynamicFn;
+
+      for (var i=0, arg; (i<sig.args.length) && (arg=sig.args[i]); i++) {
         this._addPropertyEffect(arg.model, 'complexObserver', {
           method: sig.method,
           args: sig.args,
-          trigger: arg
+          trigger: arg,
+          dynamicFn: dynamicFn
         });
-      }, this);
+      }
+      if (dynamicFn) {
+        this._addPropertyEffect(sig.method, 'complexObserver', {
+          method: sig.method,
+          args: sig.args,
+          trigger: null,
+          dynamicFn: dynamicFn
+        });
+      }
     },
 
     _addAnnotationEffects: function(notes) {
-      // create a virtual annotation list, must be concretized at instance time
-      this._nodes = [];
       // process annotations that have been parsed from template
-      notes.forEach(function(note) {
+      for (var i=0, note; (i<notes.length) && (note=notes[i]); i++)  {
         // where to find the node in the concretized list
-        var index = this._nodes.push(note) - 1;
-        note.bindings.forEach(function(binding) {
-          this._addAnnotationEffect(binding, index);
-        }, this);
-      }, this);
+        var b$ = note.bindings;
+        for (var j=0, binding; (j<b$.length) && (binding=b$[j]); j++) {
+          this._addAnnotationEffect(binding, i);
+        }
+      }
     },
 
     _addAnnotationEffect: function(note, index) {
@@ -129,49 +165,82 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       if (Polymer.Bind._shouldAddListener(note)) {
         // <node>.on.<dash-case-property>-changed: <path> = e.detail.value
         Polymer.Bind._addAnnotatedListener(this, index,
-          note.name, note.value, note.event);
+          note.name, note.parts[0].value, note.parts[0].event, note.parts[0].negate);
       }
-      if (note.signature) {
-        this._addAnnotatedComputationEffect(note, index);
-      } else {
-        // capture the node index
-        note.index = index;
-        // add 'annotation' binding effect for property 'model'
-        this._addPropertyEffect(note.model, 'annotation', note);
-      }
-    },
-
-    _addAnnotatedComputationEffect: function(note, index) {
-      var sig = note.signature;
-      if (sig.static) {
-        this.__addAnnotatedComputationEffect('__static__', index, note, sig, null);
-      } else {
-        sig.args.forEach(function(arg) {
-          if (!arg.literal) {
-            this.__addAnnotatedComputationEffect(arg.model, index, note, sig, arg);
+      for (var i=0; i<note.parts.length; i++) {
+        var part = note.parts[i];
+        if (part.signature) {
+          this._addAnnotatedComputationEffect(note, part, index);
+        } else if (!part.literal) {
+          // add 'annotation' binding effect for property 'model'
+          if (note.kind === 'attribute' && note.name[0] === '-') {
+            this._warn(this._logf('_addAnnotationEffect', 'Cannot set attribute ' + note.name + ' because "-" is not a valid attribute starting character'));
+          } else {
+            this._addPropertyEffect(part.model, 'annotation', {
+              kind: note.kind,
+              index: index,
+              name: note.name,
+              propertyName: note.propertyName,
+              value: part.value,
+              isCompound: note.isCompound,
+              compoundIndex: part.compoundIndex,
+              event: part.event,
+              customEvent: part.customEvent,
+              negate: part.negate
+            });
           }
-        }, this);
+        }
       }
     },
 
-    __addAnnotatedComputationEffect: function(property, index, note, sig, trigger) {
+    _addAnnotatedComputationEffect: function(note, part, index) {
+      var sig = part.signature;
+      if (sig.static) {
+        this.__addAnnotatedComputationEffect('__static__', index, note, part, null);
+      } else {
+        for (var i=0, arg; (i<sig.args.length) && (arg=sig.args[i]); i++) {
+          if (!arg.literal) {
+            this.__addAnnotatedComputationEffect(arg.model, index, note, part,
+              arg);
+          }
+        }
+        if (sig.dynamicFn) {
+          // trigger=null is sufficient as long as we don't allow paths to be
+          // used. If we change our mind, we must first implement this in the
+          // effects anyway where we basically do a `fn = this[methodName]` at
+          // the moment.
+          this.__addAnnotatedComputationEffect(
+              sig.method, index, note, part, null);
+        }
+      }
+    },
+
+    __addAnnotatedComputationEffect: function(property, index, note, part, trigger) {
       this._addPropertyEffect(property, 'annotatedComputation', {
         index: index,
+        isCompound: note.isCompound,
+        compoundIndex: part.compoundIndex,
         kind: note.kind,
-        property: note.name,
-        negate: note.negate,
-        method: sig.method,
-        args: sig.args,
-        trigger: trigger
+        name: note.name,
+        negate: part.negate,
+        method: part.signature.method,
+        args: part.signature.args,
+        trigger: trigger,
+        dynamicFn: part.signature.dynamicFn
       });
     },
 
     // method expressions are of the form: `name([arg1, arg2, .... argn])`
     _parseMethod: function(expression) {
       // tries to match valid javascript property names
-      var m = expression.match(/([^\s]+)\((.*)\)/);
+      var m = expression.match(/([^\s]+?)\(([\s\S]*)\)/);
       if (m) {
         var sig = { method: m[1], static: true };
+        // TODO(kaste): Optimize/memoize `getPropertyInfo`.
+        if (this.getPropertyInfo(sig.method) !== Polymer.nob) {
+          sig.static = false;
+          sig.dynamicFn = true;
+        }
         if (m[2].trim()) {
           // replace escaped commas with comma entity, split on un-escaped commas
           var args = m[2].replace(/\\,/g, '&comma;').split(',');
@@ -206,11 +275,13 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
         ;
       // basic argument descriptor
       var a = {
-        name: arg,
-        model: this._modelForPath(arg)
+        name: arg
       };
       // detect literal value (must be String or Number)
       var fc = arg[0];
+      if (fc === '-') {
+        fc = arg[1];
+      }
       if (fc >= '0' && fc <= '9') {
         fc = '#';
       }
@@ -227,8 +298,9 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       }
       // if not literal, look for structured path
       if (!a.literal) {
+        a.model = Polymer.Path.root(arg);
         // detect structured path (has dots)
-        a.structured = arg.indexOf('.') > 0;
+        a.structured = Polymer.Path.isDeep(arg);
         if (a.structured) {
           a.wildcard = (arg.slice(-2) == '.*');
           if (a.wildcard) {
@@ -240,22 +312,45 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     },
 
     // instancing
-
     _marshalInstanceEffects: function() {
       Polymer.Bind.prepareInstance(this);
-      Polymer.Bind.setupBindListeners(this);
+      if (this._bindListeners) {
+        Polymer.Bind.setupBindListeners(this);
+      }
     },
 
-    _applyEffectValue: function(value, info) {
+    _applyEffectValue: function(info, value) {
       var node = this._nodes[info.index];
-      // TODO(sorvell): ideally, the info object is normalized for easy
-      // lookup here.
-      var property = info.property || info.name || 'textContent';
-      // special processing for 'class' and 'className'; 'class' handled
-      // when attr is serialized.
+      var property = info.name;
+
+      value = this._computeFinalAnnotationValue(node, property, value, info);
+
       if (info.kind == 'attribute') {
         this.serializeValueToAttribute(value, property, node);
       } else {
+        var pinfo = node._propertyInfo && node._propertyInfo[property];
+        if (pinfo && pinfo.readOnly) {
+          return;
+        }
+        // Ideally we would call setProperty using fromAbove: true to avoid
+        // spinning the wheel needlessly, but we found that users were listening
+        // for change events outside of bindings
+        this.__setProperty(property, value, false, node);
+      }
+    },
+
+    _computeFinalAnnotationValue: function(node, property, value, info) {
+      if (info.negate) {
+        value = !value;
+      }
+
+      if (info.isCompound) {
+        var storage = node.__compoundStorage__[property];
+        storage[info.compoundIndex] = value;
+        value = storage.join('');
+      }
+
+      if (info.kind !== 'attribute') {
         // TODO(sorvell): consider pre-processing the following two string
         // comparisons in the hot path so this can be a boolean check
         if (property === 'className') {
@@ -266,19 +361,15 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
             (node.localName == 'input' && property == 'value')) {
           value = value == undefined ? '' : value;
         }
-        // TODO(kschaaf): Ideally we'd use `fromAbove: true`, but this
-        // breaks read-only properties
-        // this.__setProperty(property, value, true, node);
-        return node[property] = value;
       }
+      return value;
     },
 
     _executeStaticEffects: function() {
-      if (this._propertyEffects.__static__) {
+      if (this._propertyEffects && this._propertyEffects.__static__) {
         this._effectEffects('__static__', null, this._propertyEffects.__static__);
       }
     }
 
   });
-
 </script>

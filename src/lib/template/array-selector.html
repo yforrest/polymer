@@ -66,6 +66,7 @@ is false, `selected` is a property representing the last selected item.  When
 
   Polymer({
     is: 'array-selector',
+    _template: null,
 
     properties: {
 
@@ -74,7 +75,7 @@ is false, `selected` is a property representing the last selected item.  When
        */
       items: {
         type: Array,
-        observer: '_resetSelection'
+        observer: 'clearSelection'
       },
 
       /**
@@ -85,7 +86,7 @@ is false, `selected` is a property representing the last selected item.  When
       multi: {
         type: Boolean,
         value: false,
-        observer: '_resetSelection'
+        observer: 'clearSelection'
       },
 
       /**
@@ -94,6 +95,15 @@ is false, `selected` is a property representing the last selected item.  When
        * if no item is selected.
        */
       selected: {
+        type: Object,
+        notify: true
+      },
+
+      /**
+       * When `multi` is false, this is the currently selected item, or `null`
+       * if no item is selected.
+       */
+      selectedItem: {
         type: Object,
         notify: true
       },
@@ -108,7 +118,12 @@ is false, `selected` is a property representing the last selected item.  When
       }
     },
 
-    _resetSelection: function() {
+    /**
+     * Clears the selection state.
+     *
+     * @method clearSelection
+     */
+    clearSelection: function() {
       // Unbind previous selection
       if (Array.isArray(this.selected)) {
         for (var i=0; i<this.selected.length; i++) {
@@ -116,6 +131,7 @@ is false, `selected` is a property representing the last selected item.  When
         }
       } else {
         this.unlinkPaths('selected');
+        this.unlinkPaths('selectedItem');
       }
       // Initialize selection
       if (this.multi) {
@@ -127,6 +143,7 @@ is false, `selected` is a property representing the last selected item.  When
         this.selected = null;
         this._selectedColl = null;
       }
+      this.selectedItem = null;
     },
 
     /**
@@ -159,7 +176,9 @@ is false, `selected` is a property representing the last selected item.  When
         }
       } else {
         this.selected = null;
+        this.selectedItem = null;
         this.unlinkPaths('selected');
+        this.unlinkPaths('selectedItem');
       }
     },
 
@@ -180,15 +199,17 @@ is false, `selected` is a property representing the last selected item.  When
           }
         } else {
           this.push('selected', item);
-          skey = this._selectedColl.getKey(item);
+          var skey = this._selectedColl.getKey(item);
           this.linkPaths('selected.' + skey, 'items.' + key);
         }
       } else {
         if (this.toggle && item == this.selected) {
           this.deselect();
         } else {
-          this.linkPaths('selected', 'items.' + key);
           this.selected = item;
+          this.selectedItem = item;
+          this.linkPaths('selected', 'items.' + key);
+          this.linkPaths('selectedItem', 'items.' + key);
         }
       }
     }
